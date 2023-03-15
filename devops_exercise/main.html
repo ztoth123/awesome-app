@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<title>Assignment ABN Amro</title>
+<head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+
+    <style>
+        .heading {
+            text-align: center;
+            color: #ffffff;
+            background-color: #009286;
+        }
+
+        .summary {
+            text-align: left;
+            background-color: #F3C000;
+            color: #009286;
+            padding: 10px;
+        }
+
+        img {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            margin: 1% auto;
+            max-width: 95%;
+        }
+
+        p {
+            margin-left: 3%;
+            font-weight: bold;
+        }
+
+        .divtext {
+            border: ridge 2px;
+            padding: 5px;
+            min-height: 5em;
+            overflow: auto;
+        }
+
+        body {
+            margin: 0 auto;
+            max-width: 900px;
+        }
+        pre {
+            font-family: Consolas,"courier new";
+            color: crimson;
+            background-color: #f1f1f1;
+            padding: 2px;
+            font-size: 80%;
+        }
+    </style>
+</head>
+
+<body>
+    <h2 class="heading">Assignment: ABN Amro</h2>
+
+    <h3 class="summary">Exercise: Fix the pipeline</h3>
+
+    <div><b>Use the problems and images noted below to fix the Azure DevOps pipeline.</b> Once done, reply to the email from which you downloaded this assignment and reply to it either with a) a file containing the adjusted pipeline or b) a link to the repository containing your changes.</div>
+    <p></br>Issues:</p>
+
+    <ul>
+        <li>
+            Feature branches seem to not run automatically when a Git push is done to Azure DevOps.
+        </li>
+        <li>
+            Manual run of the pipeline does not show the production environment.
+        </li>
+        <li>
+            The person that wrote the resources is not sure of the details they wrote down.
+        </li>
+        <li>
+            The name of the application being used - <b>awesome-app</b> - needs to be turned into a variable
+        </li>
+        <li>
+            The version of the application needs to be saved into a variable to be able use it in another stage.
+        </li>
+        <li>
+            The <b>versioning</b> stage needs to happen only for the development environment parameter.
+        </li>
+        <li>
+            The pipeline does not deploy to all environments.
+        </li>
+        <li>
+            The pipeline does not specify that only the main branch can deploy to production and that the other branches cannot.
+        </li>
+    </ul>
+
+    <section>
+        <article>
+            <details>
+                <summary class="summary">
+                    Images
+                </summary>
+                <a target="_blank" href="files/service_connections.png">
+                    <img src="files/service_connections.png" alt="service connections" height="20%">
+                </a>
+                <a target="_blank" href="files/nexus3.png">
+                    <img src="files/nexus3.png" alt="nexus 3" height="20%">
+                </a>
+            </details>
+            <details>
+                <summary class="summary">
+                    Current pipeline
+                </summary>
+                    <pre>
+parameters:
+- name: deployment_environment
+  displayName: Deployment Environment
+  type: string
+  default: development
+  values:
+    - development
+    - acceptance
+    - production
+
+trigger:
+branches:
+    include:
+    - fix/*
+    - master
+    - feature/*
+
+resources:
+  containers:
+  - container: python
+    image: pyspark3:v0.7.1
+    endpoint: nexus3-docker
+
+variables:
+- name: awesome_app
+  value: 'awesome-app'
+- name: isMain
+  value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+- name: imagePullSecret
+  value: 'my-app-secret'
+
+stages:
+- stage: Versioning
+  condition: eq('${{ parameters.deployment_environment }}', 'development')
+  jobs:
+  - job: GetLatestVersion
+    steps:
+    - task: Bash@3
+      displayName: Determine Package Version
+      name: version
+      inputs:
+        targetType: 'inline'
+        script: |
+          pip download ${{ variables.awesome_app }} --no-deps -d ./package_download
+          CURRENT_VERSION=`ls package_download | grep ${{ variables.awesome_app }} | cut -d "-" -f2`
+          echo "Current Nexus Version is $CURRENT_VERSION"
+          echo "##vso[task.setvariable variable=awesomeversion;isOutput=true]$CURRENT_VERSION"
+- stage: PrintVersion
+  condition: eq('${{ parameters.deployment_environment }}', 'development')
+  jobs:
+  - job: GetLatestVersion
+    variables:
+      - name: AppVersion
+        value: $[ stageDependencies.Versioning.GetLatestVersion.outputs['version.awesomeversion'] ]
+    steps:
+    - task: Bash@3
+      displayName: Use Package Version from Versioning
+      name: printversion
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo $(AppVersion)
+
+- stage: DeploymentToEnvironments
+  jobs:
+  - deployment: ToDevelopment
+    displayName: Deploy To Development Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: eq('${{ parameters.deployment_environment }}', 'development')
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
+  - deployment: ToAcceptance
+    displayName: Deploy To Acceptance Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: eq('${{ parameters.deployment_environment }}', 'acceptance')
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
+  - deployment: ToProduction
+    displayName: Deploy To Production Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: and(eq('${{ parameters.deployment_environment }}', 'production'), eq(variables.isMain, 'true'))
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
+                    </pre>
+            </details>
+        </article>
+    </section>
+</body>
+</html>

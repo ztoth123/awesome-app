@@ -1,0 +1,20 @@
+
+> Feature branches seem to not run automatically when a Git push is done to Azure DevOps.
+DONE
+
+> Manual run of the pipeline does not show the production environment.
+DONE
+> The person that wrote the resources is not sure of the details they wrote down.
+DONE
+
+> The name of the application being used - awesome-app - needs to be turned into a variable
+DONE
+
+> The version of the application needs to be saved into a variable to be able use it in another stage.
+DONE
+
+> The versioning stage needs to happen only for the development environment parameter.
+
+> The pipeline does not deploy to all environments.
+
+> The pipeline does not specify that only the main branch can deploy to production and that the other branches cannot.

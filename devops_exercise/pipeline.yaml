@@ -1,0 +1,128 @@
+parameters:
+- name: deployment_environment
+  displayName: Deployment Environment
+  type: string
+  default: development
+  values:
+    - development
+    - acceptance
+    - production
+
+trigger:
+branches:
+    include:
+    - fix/*
+    - master
+    - feature/*
+
+resources:
+  containers:
+  - container: python
+    image: pyspark3:v0.7.1
+    endpoint: nexus3-docker
+
+variables:
+- name: awesome_app
+  value: 'awesome-app'
+- name: isMain
+  value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+- name: imagePullSecret
+  value: 'my-app-secret'
+
+stages:
+- stage: Versioning
+  condition: eq('${{ parameters.deployment_environment }}', 'development')
+  jobs:
+  - job: GetLatestVersion
+    steps:
+    - task: Bash@3
+      displayName: Determine Package Version
+      name: version
+      inputs:
+        targetType: 'inline'
+        script: |
+          pip download ${{ variables.awesome_app }} --no-deps -d ./package_download
+          CURRENT_VERSION=`ls package_download | grep ${{ variables.awesome_app }} | cut -d "-" -f2`
+          echo "Current Nexus Version is $CURRENT_VERSION"
+          echo "##vso[task.setvariable variable=awesomeversion;isOutput=true]$CURRENT_VERSION"
+- stage: PrintVersion
+  condition: eq('${{ parameters.deployment_environment }}', 'development')
+  jobs:
+  - job: GetLatestVersion
+    variables:
+      - name: AppVersion
+        value: $[ stageDependencies.Versioning.GetLatestVersion.outputs['version.awesomeversion'] ]
+    steps:
+    - task: Bash@3
+      displayName: Use Package Version from Versioning
+      name: printversion
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo $(AppVersion)
+
+- stage: DeploymentToEnvironments
+  jobs:
+  - deployment: ToDevelopment
+    displayName: Deploy To Development Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: eq('${{ parameters.deployment_environment }}', 'development')
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
+  - deployment: ToAcceptance
+    displayName: Deploy To Acceptance Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: eq('${{ parameters.deployment_environment }}', 'acceptance')
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
+  - deployment: ToProduction
+    displayName: Deploy To Production Env
+    pool:
+      vmImage: 'ubuntu-latest'
+    condition: and(eq('${{ parameters.deployment_environment }}', 'production'), eq(variables.isMain, 'true'))
+    environment: ${{ parameters.deployment_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(Agent.BuildDirectory)/manifests/*
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
