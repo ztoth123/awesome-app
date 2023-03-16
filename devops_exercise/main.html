@@ -175,7 +175,6 @@ stages:
     displayName: Deploy To Development Env
     pool:
       vmImage: 'ubuntu-latest'
-    condition: eq('${{ parameters.deployment_environment }}', 'development')
     environment: ${{ parameters.deployment_environment }}
     strategy:
       runOnce:
@@ -194,9 +193,10 @@ stages:
                 $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
   - deployment: ToAcceptance
     displayName: Deploy To Acceptance Env
+    dependsOn: ToDevelopment
     pool:
       vmImage: 'ubuntu-latest'
-    condition: eq('${{ parameters.deployment_environment }}', 'acceptance')
+    condition: and(succeeded(), or(eq('${{ parameters.deployment_environment }}', 'acceptance'), eq('${{ parameters.deployment_environment }}', 'production')))
     environment: ${{ parameters.deployment_environment }}
     strategy:
       runOnce:
@@ -215,14 +215,18 @@ stages:
                 $(resources.container.python.registry)/$(resources.container.python.repository):$(resources.container.python.tag)
   - deployment: ToProduction
     displayName: Deploy To Production Env
+    dependsOn: ToAcceptance
     pool:
       vmImage: 'ubuntu-latest'
-    condition: and(eq('${{ parameters.deployment_environment }}', 'production'), eq(variables.isMain, 'true'))
+    condition: and(succeeded(), eq('${{ parameters.deployment_environment }}', 'production'), eq(variables.isMain, 'true'))
     environment: ${{ parameters.deployment_environment }}
     strategy:
       runOnce:
         deploy:
           steps:
+          - task: ManualValidation@0
+            inputs:
+              notifyUsers: # string. Required. Notify users. 
           - task: KubernetesManifest@0
             displayName: Deploy to Kubernetes cluster
             inputs:
